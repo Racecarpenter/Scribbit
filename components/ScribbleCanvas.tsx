@@ -12,40 +12,51 @@ export default function ScribbleCanvas(props: Readonly<{
   const { onDone, softSeconds = 60 } = props
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const [strokes, setStrokes] = useState<Stroke[]>([])
+  const rafRef = useRef<number | null>(null)
+
+  // ✅ strokes live in a ref (no re-render per move)
+  const strokesRef = useRef<Stroke[]>([])
+  const activeStrokeRef = useRef<Stroke | null>(null)
+
   const [isDrawing, setIsDrawing] = useState(false)
+  const [strokesCount, setStrokesCount] = useState(0)
+
   const [startTs, setStartTs] = useState<number | null>(null)
   const [now, setNow] = useState<number>(() => Date.now())
 
-useEffect(() => {
-  if (!startTs) return
-  const t = setInterval(() => setNow(Date.now()), 100)
-  return () => clearInterval(t)
-}, [startTs])
+  // timer tick only after start
+  useEffect(() => {
+    if (!startTs) return
+    const t = setInterval(() => setNow(Date.now()), 100)
+    return () => clearInterval(t)
+  }, [startTs])
 
-const elapsed = startTs ? (now - startTs) / 1000 : 0
+  const elapsed = startTs ? (now - startTs) / 1000 : 0
   const progress = Math.min(1, elapsed / softSeconds)
 
-  const getPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect()
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top }
-  }
-
-  const redraw = (nextStrokes: Stroke[]) => {
+  const resizeCanvas = () => {
     const canvas = canvasRef.current
     if (!canvas) return
-
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    // fit to displayed size
     const rect = canvas.getBoundingClientRect()
     const dpr = window.devicePixelRatio || 1
     canvas.width = Math.floor(rect.width * dpr)
     canvas.height = Math.floor(rect.height * dpr)
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  }
 
-    // background (keep pure white for clean export look)
+  const redraw = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const rect = canvas.getBoundingClientRect()
+
+    // background (pure white)
+    ctx.clearRect(0, 0, rect.width, rect.height)
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, rect.width, rect.height)
 
@@ -55,7 +66,7 @@ const elapsed = startTs ? (now - startTs) / 1000 : 0
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
 
-    for (const s of nextStrokes) {
+    for (const s of strokesRef.current) {
       if (s.length < 2) continue
       ctx.beginPath()
       ctx.moveTo(s[0].x, s[0].y)
@@ -64,45 +75,75 @@ const elapsed = startTs ? (now - startTs) / 1000 : 0
     }
   }
 
+  const scheduleRedraw = () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    rafRef.current = requestAnimationFrame(() => redraw())
+  }
+
+  // size once + on resize/orientation
+  useEffect(() => {
+    resizeCanvas()
+    redraw()
+
+    const onResize = () => {
+      resizeCanvas()
+      redraw()
+    }
+
+    window.addEventListener('resize', onResize)
+    return () => {
+      window.removeEventListener('resize', onResize)
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    }
+  }, [])
+
+  const getPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top }
+  }
+
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId)
     if (!startTs) setStartTs(Date.now())
     setIsDrawing(true)
-    const p = getPos(e)
 
-    setStrokes((prev) => {
-      const next = [...prev, [p]]
-      requestAnimationFrame(() => redraw(next))
-      return next
-    })
+    const p = getPos(e)
+    const stroke: Stroke = [p]
+    activeStrokeRef.current = stroke
+    strokesRef.current.push(stroke)
+
+    setStrokesCount(strokesRef.current.length)
+    scheduleRedraw()
   }
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isDrawing) return
-    const p = getPos(e)
+    const stroke = activeStrokeRef.current
+    if (!stroke) return
 
-    setStrokes((prev) => {
-      const next = [...prev]
-      next[next.length - 1] = [...next[next.length - 1], p]
-      requestAnimationFrame(() => redraw(next))
-      return next
-    })
+    const p = getPos(e)
+    stroke.push(p)
+    scheduleRedraw()
   }
 
-  const endStroke = () => setIsDrawing(false)
+  const endStroke = () => {
+    setIsDrawing(false)
+    activeStrokeRef.current = null
+  }
 
   const undo = () => {
-    setStrokes((prev) => {
-      const next = prev.slice(0, -1)
-      requestAnimationFrame(() => redraw(next))
-      return next
-    })
+    strokesRef.current = strokesRef.current.slice(0, -1)
+    activeStrokeRef.current = null
+    setStrokesCount(strokesRef.current.length)
+    scheduleRedraw()
   }
 
   const clear = () => {
-    setStrokes([])
+    strokesRef.current = []
+    activeStrokeRef.current = null
+    setStrokesCount(0)
     setStartTs(null)
-    requestAnimationFrame(() => redraw([]))
+    scheduleRedraw()
   }
 
   const exportPng = async () => {
@@ -117,6 +158,7 @@ const elapsed = startTs ? (now - startTs) / 1000 : 0
 
     const ctx = out.getContext('2d')
     if (!ctx) return
+
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, out.width, out.height)
 
@@ -125,7 +167,7 @@ const elapsed = startTs ? (now - startTs) / 1000 : 0
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
 
-    for (const s of strokes) {
+    for (const s of strokesRef.current) {
       if (s.length < 2) continue
       ctx.beginPath()
       ctx.moveTo(s[0].x, s[0].y)
@@ -141,7 +183,6 @@ const elapsed = startTs ? (now - startTs) / 1000 : 0
   }
 
   const ringStyle: React.CSSProperties = {
-    // blue -> teal -> lime, then faint remainder
     background: `conic-gradient(
       #0B73E5 0deg,
       #19C9C3 ${Math.min(progress, 0.55) * 360}deg,
@@ -149,6 +190,8 @@ const elapsed = startTs ? (now - startTs) / 1000 : 0
       rgba(14,43,36,0.10) 0deg
     )`,
   }
+
+  const canDone = strokesCount > 0
 
   return (
     <div className="space-y-4 text-[#0E2B24]">
@@ -174,7 +217,7 @@ const elapsed = startTs ? (now - startTs) / 1000 : 0
             className="rounded-2xl bg-white/60 px-3 py-2 text-sm font-semibold
                        ring-1 ring-black/10 hover:bg-white transition disabled:opacity-50"
             onClick={undo}
-            disabled={!strokes.length}
+            disabled={!canDone}
             type="button"
           >
             Undo
@@ -184,7 +227,7 @@ const elapsed = startTs ? (now - startTs) / 1000 : 0
             className="rounded-2xl bg-white/60 px-3 py-2 text-sm font-semibold
                        ring-1 ring-black/10 hover:bg-white transition disabled:opacity-50"
             onClick={clear}
-            disabled={!strokes.length}
+            disabled={!canDone}
             type="button"
           >
             Clear
@@ -196,7 +239,7 @@ const elapsed = startTs ? (now - startTs) / 1000 : 0
                        bg-[linear-gradient(90deg,#0B73E5_0%,#19C9C3_55%,#8CE13C_110%)]
                        shadow-sm shadow-black/10 active:scale-[0.99] transition"
             onClick={exportPng}
-            disabled={!strokes.length}
+            disabled={!canDone}
             type="button"
           >
             Done
@@ -209,10 +252,13 @@ const elapsed = startTs ? (now - startTs) / 1000 : 0
         <canvas
           ref={canvasRef}
           className="block h-[460px] w-full touch-none bg-white"
+          style={{ touchAction: 'none' }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={endStroke}
           onPointerCancel={endStroke}
+          onPointerLeave={endStroke}
+          onPointerOut={endStroke}
         />
       </div>
 
