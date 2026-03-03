@@ -78,10 +78,9 @@ export default function SignInPage() {
 
       localStorage.setItem(LS_KEY, String(Date.now()))
       setStatus('Check your email for the sign-in link.')
-    } catch (ex: any) {
-      const msg = ex?.message ?? 'Failed to send sign-in link.'
+    } catch (ex: unknown) {
+      const msg = ex instanceof Error ? ex.message : 'Failed to send sign-in link.'
 
-      // Friendly copy for rate limit
       if (msg.toLowerCase().includes('rate limit')) {
         setErr('Rate limit hit. Try again later, or use a link you already received.')
       } else {

@@ -1,22 +1,29 @@
 'use client'
 
-import React, { useMemo, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 
 type Point = { x: number; y: number }
 type Stroke = Point[]
 
-export default function ScribbleCanvas(props: {
+export default function ScribbleCanvas(props: Readonly<{
   onDone: (pngBlob: Blob) => void
   softSeconds?: number
-}) {
+}>) {
   const { onDone, softSeconds = 60 } = props
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [strokes, setStrokes] = useState<Stroke[]>([])
   const [isDrawing, setIsDrawing] = useState(false)
   const [startTs, setStartTs] = useState<number | null>(null)
+  const [now, setNow] = useState<number>(() => Date.now())
 
-  const elapsed = useMemo(() => (startTs ? (Date.now() - startTs) / 1000 : 0), [startTs])
+useEffect(() => {
+  if (!startTs) return
+  const t = setInterval(() => setNow(Date.now()), 100)
+  return () => clearInterval(t)
+}, [startTs])
+
+const elapsed = startTs ? (now - startTs) / 1000 : 0
   const progress = Math.min(1, elapsed / softSeconds)
 
   const getPos = (e: React.PointerEvent<HTMLCanvasElement>) => {

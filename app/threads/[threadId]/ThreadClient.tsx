@@ -7,6 +7,7 @@ import RevealModal from '@/components/RevealModal'
 import { createSupabaseBrowserClient } from '@/lib/supabaseClient'
 import { sendImageMessage } from '@/lib/sendMessage'
 import { getSignedUrl } from '@/lib/getSignedUrl'
+import Link from 'next/link'
 
 type UiMessage = MessageRow & { url: string | null }
 
@@ -225,8 +226,9 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
             }
 
             await sendImageMessage({ threadId, type: 'scribble', pngBlob: blob })
-        } catch (e: any) {
-            setErr(e?.message ?? 'Failed to send scribble')
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : 'Failed to send scribble'
+            setErr(msg)
             setShowCanvas(true)
         }
     }
@@ -271,8 +273,9 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
             const transformUrl = await getSignedUrl(path)
             setRevealData({ scribbleUrl, transformUrl, caption })
             setRevealOpen(true)
-        } catch (e: any) {
-            setErr(e?.message ?? 'Failed to send transform')
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : 'Failed to send transform'
+            setErr(msg)
             setShowCanvas(true)
         }
     }
@@ -308,7 +311,7 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
                 {/* Header */}
                 <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3 min-w-0">
-                        <a
+                        <Link
                             href="/threads"
                             className="h-10 w-10 rounded-2xl bg-white/70 ring-1 ring-black/10 shadow-sm grid place-items-center
                          hover:bg-white transition"
@@ -316,7 +319,7 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
                             title="Back"
                         >
                             ←
-                        </a>
+                        </Link>
 
                         <div className="min-w-0">
                             <div className="text-xl font-extrabold tracking-tight truncate">Thread</div>

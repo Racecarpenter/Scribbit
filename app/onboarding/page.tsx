@@ -75,9 +75,9 @@ export default function OnboardingPage() {
       if (error) throw error
 
       window.location.href = '/threads'
-    } catch (e: any) {
-      const msg = e?.message ?? 'Failed to save profile'
-      if (e?.code === '23505' || msg.includes('profiles_username_key')) {
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to save profile'
+      if (msg.includes('profiles_username_key') || msg.includes('duplicate key')) {
         setErr('That username is already taken. Try another.')
       } else {
         setErr(msg)
