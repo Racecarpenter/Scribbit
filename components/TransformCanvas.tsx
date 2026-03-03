@@ -20,13 +20,15 @@ export default function TransformCanvas(props: {
   const [isDrawing, setIsDrawing] = useState(false)
   const [startTs, setStartTs] = useState<number | null>(null)
   const [caption, setCaption] = useState('')
-  const [color, setColor] = useState('#111111')
+  const [color, setColor] = useState('#0E2B24')
   const [imgReady, setImgReady] = useState(false)
 
   const elapsed = useMemo(() => (startTs ? (Date.now() - startTs) / 1000 : 0), [startTs])
   const progress = Math.min(1, elapsed / softSeconds)
 
-  const palette = ['#111111', '#2E7D32', '#1976D2', '#F9A825']
+  // Palette: forest/ink + green + blue + warm accent
+  // (tweak later to match your exact brand chips if needed)
+  const palette = ['#0E2B24', '#2E7D32', '#0B73E5', '#F2B233']
 
   // 1) Preload underlay image ONCE (or when URL changes)
   useEffect(() => {
@@ -39,7 +41,7 @@ export default function TransformCanvas(props: {
       if (cancelled) return
       underlayImgRef.current = img
       setImgReady(true)
-      redraw(strokes) // draw immediately once ready
+      redraw(strokes)
     }
     img.onerror = () => {
       if (cancelled) return
@@ -86,7 +88,7 @@ export default function TransformCanvas(props: {
 
     const rect = canvas.getBoundingClientRect()
 
-    // background
+    // background (keep pure white inside drawing surface)
     ctx.clearRect(0, 0, rect.width, rect.height)
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, rect.width, rect.height)
@@ -209,50 +211,111 @@ export default function TransformCanvas(props: {
     onDone(blob, caption.trim())
   }
 
+  const ringStyle: React.CSSProperties = {
+    background: `conic-gradient(
+      #0B73E5 0deg,
+      #19C9C3 ${Math.min(progress, 0.55) * 360}deg,
+      #8CE13C ${progress * 360}deg,
+      rgba(14,43,36,0.10) 0deg
+    )`,
+  }
+
+  const canDone = strokes.length > 0
+
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div className="font-semibold">Transform</div>
+    <div className="space-y-4 text-[#0E2B24]">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-base font-extrabold tracking-tight">Transform</div>
+          <div className="text-sm text-[#0E2B24]/60">
+            Trace the underlay and add your twist.
+          </div>
+        </div>
 
         <div className="flex items-center gap-2">
+          {/* Timer chip */}
           <div
-            className="h-7 w-7 rounded-full border"
-            style={{
-              background: `conic-gradient(rgba(0,0,0,0.35) ${progress * 360}deg, rgba(0,0,0,0.06) 0deg)`,
-            }}
+            className="h-9 w-9 rounded-2xl p-[2px] ring-1 ring-black/10 bg-white/60 shadow-sm"
             title="Soft timer"
-          />
-          <button className="rounded border px-3 py-1" onClick={undo} disabled={!strokes.length}>
+          >
+            <div className="h-full w-full rounded-[14px] p-[2px]" style={ringStyle}>
+              <div className="h-full w-full rounded-[12px] bg-[#F6F4EF]" />
+            </div>
+          </div>
+
+          <button
+            className="rounded-2xl bg-white/60 px-3 py-2 text-sm font-semibold
+                       ring-1 ring-black/10 hover:bg-white transition disabled:opacity-50"
+            onClick={undo}
+            disabled={!strokes.length}
+            type="button"
+          >
             Undo
           </button>
-          <button className="rounded border px-3 py-1" onClick={clear} disabled={!strokes.length}>
+
+          <button
+            className="rounded-2xl bg-white/60 px-3 py-2 text-sm font-semibold
+                       ring-1 ring-black/10 hover:bg-white transition disabled:opacity-50"
+            onClick={clear}
+            disabled={!strokes.length}
+            type="button"
+          >
             Clear
           </button>
-          <button className="rounded bg-green-600 px-3 py-1 text-white" onClick={exportPng} disabled={!strokes.length}>
+
+          <button
+            className="rounded-2xl px-4 py-2 text-sm font-extrabold text-white
+                       disabled:opacity-50
+                       bg-[linear-gradient(90deg,#0B73E5_0%,#19C9C3_55%,#8CE13C_110%)]
+                       shadow-sm shadow-black/10 active:scale-[0.99] transition"
+            onClick={exportPng}
+            disabled={!canDone}
+            type="button"
+          >
             Done
           </button>
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
-        {palette.map((p) => (
-          <button
-            key={p}
-            onClick={() => setColor(p)}
-            className={`h-8 w-8 rounded-full border ${color === p ? 'ring-2 ring-green-600' : ''}`}
-            style={{ background: p }}
-            aria-label="color"
-          />
-        ))}
-        <div className="text-sm text-gray-600 ml-2">
-          {imgReady ? 'Underlay loaded' : 'Loading underlay…'}
+      {/* Palette + status */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2">
+          {palette.map((p) => {
+            const selected = color === p
+            return (
+              <button
+                key={p}
+                onClick={() => setColor(p)}
+                className={[
+                  'h-9 w-9 rounded-2xl ring-1 ring-black/10 shadow-sm transition',
+                  'hover:scale-[1.02] active:scale-[0.98]',
+                  selected ? 'ring-2 ring-[#8CE13C]/60' : '',
+                ].join(' ')}
+                style={{ background: p }}
+                aria-label="color"
+                type="button"
+              />
+            )
+          })}
         </div>
+
+        <span
+          className={[
+            'inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-semibold',
+            'bg-white/60 ring-1 ring-black/10',
+          ].join(' ')}
+        >
+          <span className={`h-2 w-2 rounded-full ${imgReady ? 'bg-[#8CE13C]' : 'bg-[#0B73E5]'}`} />
+          <span className="text-[#0E2B24]/70">{imgReady ? 'Underlay loaded' : 'Loading underlay…'}</span>
+        </span>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border bg-white">
+      {/* Canvas */}
+      <div className="overflow-hidden rounded-3xl bg-white/70 ring-1 ring-black/10 shadow-sm">
         <canvas
           ref={canvasRef}
-          className="block h-[460px] w-full touch-none"
+          className="block h-[460px] w-full touch-none bg-white"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={endStroke}
@@ -260,15 +323,22 @@ export default function TransformCanvas(props: {
         />
       </div>
 
-      <input
-        className="w-full rounded-xl border p-3"
-        placeholder="Caption (optional)"
-        maxLength={60}
-        value={caption}
-        onChange={(e) => setCaption(e.target.value)}
-      />
+      {/* Caption */}
+      <div className="space-y-2">
+        <div className="text-sm font-semibold">Caption (optional)</div>
+        <input
+          className="w-full rounded-2xl bg-white/70 px-4 py-3 text-sm
+                     ring-1 ring-black/10 focus:outline-none
+                     focus:ring-2 focus:ring-[#8CE13C]/60"
+          placeholder="Give it a name…"
+          maxLength={60}
+          value={caption}
+          onChange={(e) => setCaption(e.target.value)}
+        />
+        <div className="text-xs text-[#0E2B24]/45">{caption.trim().length}/60</div>
+      </div>
 
-      {progress >= 1 && <div className="text-sm text-gray-600">Time’s up… or keep going 😏</div>}
+      {progress >= 1 && <div className="text-sm text-[#0E2B24]/60">Time’s up… or keep going 😏</div>}
     </div>
   )
 }
