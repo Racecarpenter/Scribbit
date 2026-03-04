@@ -22,6 +22,7 @@ type MessageRow = {
 }
 
 const bypass = process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === '1'
+const REVEAL_LS_PREFIX = 'scribbit:revealed_transform:'
 
 function timeAgo(iso: string) {
   const t = new Date(iso).getTime()
@@ -62,6 +63,29 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
     if (!el) return
     setStickToTop(el.scrollTop < 120)
   }, [])
+
+  // Persisted "already revealed" marker per thread
+  useEffect(() => {
+    if (bypass) return
+    if (!threadId) return
+    try {
+      const key = `${REVEAL_LS_PREFIX}${threadId}`
+      const saved = localStorage.getItem(key)
+      setLastRevealedTransformId(saved || null)
+    } catch {
+      setLastRevealedTransformId(null)
+    }
+  }, [threadId])
+
+  const markRevealed = useCallback((transformId: string) => {
+    setLastRevealedTransformId(transformId)
+    try {
+      const key = `${REVEAL_LS_PREFIX}${threadId}`
+      localStorage.setItem(key, transformId)
+    } catch {
+      // ignore
+    }
+  }, [threadId])
 
   const loadMessages = useCallback(async () => {
     setErr(null)
@@ -194,7 +218,6 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
   const canAct = useMemo(() => {
     if (!myId) return false
     if (!last) return true // first move
-    // Waiting only when last was YOUR scribble (friend must transform)
     if (last.type === 'scribble' && last.sender_id === myId) return false
     return true
   }, [last, myId])
@@ -224,15 +247,17 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
 
   // Reveal rule (newest-first):
   // - Only open RevealModal when we receive a NEW transform from the other user.
-  // - Find the first scribble AFTER that transform in the array (older message).
+  // - Only show once per transform id (persisted in localStorage).
+  // - Pair with the first scribble AFTER that transform (older message).
   useEffect(() => {
     if (!myId) return
     if (messages.length === 0) return
 
     const latestTransform = messages.find((m) => m.type === 'transform') ?? null
     if (!latestTransform) return
-
     if (latestTransform.sender_id === myId) return
+
+    // already revealed (persisted)
     if (latestTransform.id === lastRevealedTransformId) return
 
     const idx = messages.findIndex((m) => m.id === latestTransform.id)
@@ -256,8 +281,8 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
       caption: latestTransform.caption,
     })
     setRevealOpen(true)
-    setLastRevealedTransformId(latestTransform.id)
-  }, [messages, myId, lastRevealedTransformId])
+    markRevealed(latestTransform.id)
+  }, [messages, myId, lastRevealedTransformId, markRevealed])
 
   const onDone = useCallback(
     async (blob: Blob) => {
@@ -332,8 +357,7 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
           caption,
         })
 
-        // IMPORTANT: Do NOT reveal to the sender.
-        // Receiver reveals when transform arrives via realtime/refetch.
+        // Do NOT reveal to sender in prod.
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : 'Failed to send transform'
         setErr(msg)
@@ -357,8 +381,7 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
             <div className="flex items-center gap-3 min-w-0">
               <Link
                 href="/threads"
-                className="h-10 w-10 rounded-2xl bg-white/70 ring-1 ring-black/10 shadow-sm grid place-items-center
-                         hover:bg-white transition"
+                className="h-10 w-10 rounded-2xl bg-white/70 ring-1 ring-black/10 shadow-sm grid place-items-center hover:bg-white transition"
                 aria-label="Back to threads"
                 title="Back"
               >
@@ -387,9 +410,7 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
           </div>
         </div>
 
-        {err && (
-          <div className="mb-3 rounded-2xl bg-white/70 ring-1 ring-red-500/20 p-4 text-red-800">{err}</div>
-        )}
+        {err && <div className="mb-3 rounded-2xl bg-white/70 ring-1 ring-red-500/20 p-4 text-red-800">{err}</div>}
 
         {/* Composer slot */}
         {showCanvas && (
@@ -401,19 +422,13 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
             )}
 
             {nextAction === 'send_transform' && !underlayUrl && (
-              <div className="rounded-2xl bg-white p-4 ring-1 ring-black/10">
-                No scribble found to use as underlay.
-              </div>
+              <div className="rounded-2xl bg-white p-4 ring-1 ring-black/10">No scribble found to use as underlay.</div>
             )}
           </div>
         )}
 
         {/* Messages (only scrolling area) */}
-        <div
-          ref={listRef}
-          onScroll={onScroll}
-          className="flex-1 space-y-4 overflow-y-auto pr-1 pb-2"
-        >
+        <div ref={listRef} onScroll={onScroll} className="flex-1 space-y-4 overflow-y-auto pr-1 pb-2">
           <div ref={topRef} />
 
           {loading && <div className="text-sm text-[#0E2B24]/60">Loading…</div>}
