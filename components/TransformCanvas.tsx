@@ -10,9 +10,8 @@ type UnderlayStatus = 'loading' | 'ready' | 'error'
 export default function TransformCanvas(props: Readonly<{
   underlayUrl: string
   onDone: (pngBlob: Blob, caption: string) => void
-  softSeconds?: number
 }>) {
-  const { underlayUrl, onDone, softSeconds = 60 } = props
+  const { underlayUrl, onDone } = props
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const underlayImgRef = useRef<HTMLImageElement | null>(null)
@@ -25,25 +24,12 @@ export default function TransformCanvas(props: Readonly<{
   const [isDrawing, setIsDrawing] = useState(false)
   const [strokesCount, setStrokesCount] = useState(0)
 
-  const [startTs, setStartTs] = useState<number | null>(null)
-  const [now, setNow] = useState<number>(() => Date.now())
-
   const [caption, setCaption] = useState('')
   const [color, setColor] = useState('#0E2B24')
 
   // ✅ for UI rendering (no refs accessed during render)
   const [underlayStatus, setUnderlayStatus] = useState<UnderlayStatus>('loading')
   const [loadedUnderlayUrl, setLoadedUnderlayUrl] = useState<string | null>(null)
-
-  // timer tick only after start
-  useEffect(() => {
-    if (!startTs) return
-    const t = setInterval(() => setNow(Date.now()), 100)
-    return () => clearInterval(t)
-  }, [startTs])
-
-  const elapsed = startTs ? (now - startTs) / 1000 : 0
-  const progress = Math.min(1, elapsed / softSeconds)
 
   const palette = ['#0E2B24', '#2E7D32', '#0B73E5', '#F2B233']
 
@@ -118,11 +104,10 @@ export default function TransformCanvas(props: Readonly<{
     }
   }, [])
 
-  // underlay preload (NO setState in effect body)
+  // underlay preload
   useEffect(() => {
     let cancelled = false
 
-    // reset refs; do NOT set state here (your lint hates it)
     underlayImgRef.current = null
 
     const img = new Image()
@@ -151,15 +136,9 @@ export default function TransformCanvas(props: Readonly<{
     }
   }, [underlayUrl])
 
-  // ✅ derive "loading" without any state update in effect:
-  // if current URL isn't the loaded URL AND we aren't in error, show loading
-  const loadedUnder = loadedUnderlayUrl === underlayUrl
-        ? 'ready'
-        : 'loading'
-  const derivedStatus: UnderlayStatus =
-    underlayStatus === 'error'
-      ? 'error'
-      : loadedUnder
+  // ✅ derive "loading" without any state update in effect
+  const loadedUnder = loadedUnderlayUrl === underlayUrl ? 'ready' : 'loading'
+  const derivedStatus: UnderlayStatus = underlayStatus === 'error' ? 'error' : loadedUnder
 
   const getPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -168,7 +147,6 @@ export default function TransformCanvas(props: Readonly<{
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId)
-    if (!startTs) setStartTs(Date.now())
     setIsDrawing(true)
 
     const p = getPos(e)
@@ -203,7 +181,6 @@ export default function TransformCanvas(props: Readonly<{
     strokesRef.current = []
     activeStrokeRef.current = null
     setStrokesCount(0)
-    setStartTs(null)
     scheduleRedraw()
   }
 
@@ -242,32 +219,18 @@ export default function TransformCanvas(props: Readonly<{
       ctx.stroke()
     }
 
-    const blob = await new Promise<Blob | null>((resolve) =>
-      out.toBlob((b) => resolve(b), 'image/png', 1.0)
-    )
+    const blob = await new Promise<Blob | null>((resolve) => out.toBlob((b) => resolve(b), 'image/png', 1.0))
     if (!blob) throw new Error('Failed to export PNG')
 
     onDone(blob, caption.trim())
   }
 
-  const ringStyle: React.CSSProperties = {
-    background: `conic-gradient(
-      #0B73E5 0deg,
-      #19C9C3 ${Math.min(progress, 0.55) * 360}deg,
-      #8CE13C ${progress * 360}deg,
-      rgba(14,43,36,0.10) 0deg
-    )`,
-  }
-
   const canDone = strokesCount > 0
   const isReady = derivedStatus === 'ready'
-  const notReady = derivedStatus === 'error'
-    ? 'Underlay failed'
-    : 'Loading underlay…'
-  const statusText =
-    isReady
-      ? 'Underlay loaded'
-      : notReady
+  const statusText = isReady ? 'Underlay loaded' : derivedStatus === 'error' ? 'Underlay failed' : 'Loading underlay…'
+
+  // while drawing: avoid mis-taps
+  const disableActions = isDrawing
 
   return (
     <div className="space-y-4 text-[#0E2B24]">
@@ -278,16 +241,10 @@ export default function TransformCanvas(props: Readonly<{
         </div>
 
         <div className="flex items-center gap-2">
-          <div className="h-9 w-9 rounded-2xl p-[2px] ring-1 ring-black/10 bg-white/60 shadow-sm" title="Soft timer">
-            <div className="h-full w-full rounded-[14px] p-[2px]" style={ringStyle}>
-              <div className="h-full w-full rounded-[12px] bg-[#F6F4EF]" />
-            </div>
-          </div>
-
           <button
             className="rounded-2xl bg-white/60 px-3 py-2 text-sm font-semibold ring-1 ring-black/10 hover:bg-white transition disabled:opacity-50"
             onClick={undo}
-            disabled={!canDone}
+            disabled={!canDone || disableActions}
             type="button"
           >
             Undo
@@ -296,21 +253,10 @@ export default function TransformCanvas(props: Readonly<{
           <button
             className="rounded-2xl bg-white/60 px-3 py-2 text-sm font-semibold ring-1 ring-black/10 hover:bg-white transition disabled:opacity-50"
             onClick={clear}
-            disabled={!canDone}
+            disabled={!canDone || disableActions}
             type="button"
           >
             Clear
-          </button>
-
-          <button
-            className="rounded-2xl px-4 py-2 text-sm font-extrabold text-white disabled:opacity-50
-                       bg-[linear-gradient(90deg,#0B73E5_0%,#19C9C3_55%,#8CE13C_110%)]
-                       shadow-sm shadow-black/10 active:scale-[0.99] transition"
-            onClick={exportPng}
-            disabled={!canDone}
-            type="button"
-          >
-            Done
           </button>
         </div>
       </div>
@@ -331,6 +277,7 @@ export default function TransformCanvas(props: Readonly<{
                 style={{ background: p }}
                 aria-label="color"
                 type="button"
+                disabled={disableActions}
               />
             )
           })}
@@ -356,8 +303,24 @@ export default function TransformCanvas(props: Readonly<{
         />
       </div>
 
+      {/* Caption + Done */}
       <div className="space-y-2">
-        <div className="text-sm font-semibold">Caption (optional)</div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-sm font-semibold">Caption (optional)</div>
+
+          <button
+            className="rounded-2xl px-4 py-2 text-sm font-extrabold text-white disabled:opacity-50
+                       bg-[linear-gradient(90deg,#0B73E5_0%,#19C9C3_55%,#8CE13C_110%)]
+                       shadow-sm shadow-black/10 active:scale-[0.99] transition"
+            onClick={exportPng}
+            disabled={!canDone || disableActions}
+            type="button"
+            title={disableActions ? 'Finish your stroke first' : undefined}
+          >
+            Done
+          </button>
+        </div>
+
         <input
           className="w-full rounded-2xl bg-white/70 px-4 py-3 text-sm ring-1 ring-black/10 focus:outline-none focus:ring-2 focus:ring-[#8CE13C]/60"
           placeholder="Give it a name…"
@@ -365,10 +328,9 @@ export default function TransformCanvas(props: Readonly<{
           value={caption}
           onChange={(e) => setCaption(e.target.value)}
         />
+
         <div className="text-xs text-[#0E2B24]/45">{caption.trim().length}/60</div>
       </div>
-
-      {progress >= 1 && <div className="text-sm text-[#0E2B24]/60">Time’s up… or keep going 😏</div>}
     </div>
   )
 }

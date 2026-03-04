@@ -13,7 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-    title: 'Scribb’it',
+  metadataBase: new URL('https://scribbit.chat'),
+
+  title: 'Scribb’it',
   description: 'Send scribbles. Transform. Reveal.',
 
   openGraph: {
@@ -21,22 +23,23 @@ export const metadata: Metadata = {
     description: 'Send scribbles. Transform. Reveal.',
     url: 'https://scribbit.chat',
     siteName: 'Scribb’it',
+    type: 'website',
     images: [
       {
-        url: '/scribbit-logo.png',
-        width: 512,
-        height: 512,
-        alt: 'Scribb’it Frog',
+        // IMPORTANT: this becomes absolute because metadataBase is set
+        url: '/og.png',
+        width: 1200,
+        height: 630,
+        alt: 'Scribb’it',
       },
     ],
-    type: 'website',
   },
 
   twitter: {
     card: 'summary_large_image',
     title: 'Scribb’it',
     description: 'Send scribbles. Transform. Reveal.',
-    images: ['/scribbit-logo.png'],
+    images: ['/og.png'],
   },
 };
 

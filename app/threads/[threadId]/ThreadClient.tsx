@@ -45,6 +45,9 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
   const [err, setErr] = useState<string | null>(null)
   const [myId, setMyId] = useState<string | null>(null)
 
+  // NEW: freeze screen while drawing (prevents scroll/pull-to-refresh)
+  const [freezeDrawing, setFreezeDrawing] = useState(false)
+
   const [revealOpen, setRevealOpen] = useState(false)
   const [revealData, setRevealData] = useState<{
     scribbleUrl: string
@@ -64,6 +67,36 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
     setStickToTop(el.scrollTop < 120)
   }, [])
 
+  // Apply/remove freeze side effects (no setState inside effect)
+  useEffect(() => {
+    if (!freezeDrawing) return
+
+    const prevBodyOverflow = document.body.style.overflow
+    const prevHtmlOverscroll = document.documentElement.style.overscrollBehavior
+    const prevBodyOverscroll = document.body.style.overscrollBehavior
+    const prevTouchAction = document.body.style.touchAction
+
+    document.body.style.overflow = 'hidden'
+    document.documentElement.style.overscrollBehavior = 'none'
+    document.body.style.overscrollBehavior = 'none'
+    document.body.style.touchAction = 'none'
+
+    const prevent = (e: TouchEvent) => {
+      e.preventDefault()
+    }
+
+    // IMPORTANT: passive: false so preventDefault works
+    document.addEventListener('touchmove', prevent, { passive: false })
+
+    return () => {
+      document.removeEventListener('touchmove', prevent)
+      document.body.style.overflow = prevBodyOverflow
+      document.documentElement.style.overscrollBehavior = prevHtmlOverscroll
+      document.body.style.overscrollBehavior = prevBodyOverscroll
+      document.body.style.touchAction = prevTouchAction
+    }
+  }, [freezeDrawing])
+
   // Persisted "already revealed" marker per thread
   useEffect(() => {
     if (bypass) return
@@ -77,15 +110,18 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
     }
   }, [threadId])
 
-  const markRevealed = useCallback((transformId: string) => {
-    setLastRevealedTransformId(transformId)
-    try {
-      const key = `${REVEAL_LS_PREFIX}${threadId}`
-      localStorage.setItem(key, transformId)
-    } catch {
-      // ignore
-    }
-  }, [threadId])
+  const markRevealed = useCallback(
+    (transformId: string) => {
+      setLastRevealedTransformId(transformId)
+      try {
+        const key = `${REVEAL_LS_PREFIX}${threadId}`
+        localStorage.setItem(key, transformId)
+      } catch {
+        // ignore
+      }
+    },
+    [threadId]
+  )
 
   const loadMessages = useCallback(async () => {
     setErr(null)
@@ -131,11 +167,7 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
     const uid = userRes.user.id
     setMyId(uid)
 
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('username')
-      .eq('id', uid)
-      .maybeSingle()
+    const { data: profile } = await supabase.from('profiles').select('username').eq('id', uid).maybeSingle()
 
     if (!profile?.username) {
       window.location.href = '/onboarding'
@@ -238,17 +270,14 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
 
   // Underlay for TransformCanvas = most recent scribble url (newest-first)
   const underlayUrl = useMemo(() => {
-    for (let i = 0; i < messages.length; i += 1) {
-      const m = messages[i]
+    for (const element of messages) {
+      const m = element
       if (m.type === 'scribble') return m.url ?? null
     }
     return null
   }, [messages])
 
-  // Reveal rule (newest-first):
-  // - Only open RevealModal when we receive a NEW transform from the other user.
-  // - Only show once per transform id (persisted in localStorage).
-  // - Pair with the first scribble AFTER that transform (older message).
+  // Reveal rule (newest-first)
   useEffect(() => {
     if (!myId) return
     if (messages.length === 0) return
@@ -256,8 +285,6 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
     const latestTransform = messages.find((m) => m.type === 'transform') ?? null
     if (!latestTransform) return
     if (latestTransform.sender_id === myId) return
-
-    // already revealed (persisted)
     if (latestTransform.id === lastRevealedTransformId) return
 
     const idx = messages.findIndex((m) => m.id === latestTransform.id)
@@ -275,6 +302,8 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
     if (!scribbleUrl || !latestTransform.url) return
 
     setShowCanvas(false)
+    setFreezeDrawing(false)
+
     setRevealData({
       scribbleUrl,
       transformUrl: latestTransform.url,
@@ -289,6 +318,7 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
       try {
         setErr(null)
         setShowCanvas(false)
+        setFreezeDrawing(false)
 
         if (bypass) {
           const id = crypto.randomUUID()
@@ -324,11 +354,11 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
       try {
         setErr(null)
         setShowCanvas(false)
+        setFreezeDrawing(false)
 
         if (!underlayUrl) throw new Error('Missing scribble underlay')
 
         if (bypass) {
-          // In bypass/dev, keep instant reveal to demo
           const id = crypto.randomUUID()
           const created_at = new Date().toISOString()
           const transformUrl = '/placeholder-transform.png'
@@ -367,6 +397,8 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
     [myId, threadId, underlayUrl]
   )
 
+  const drawingOpen = showCanvas
+
   return (
     <div className="h-screen bg-[#F6F4EF] text-[#0E2B24]">
       <div
@@ -379,14 +411,27 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
         <div className="sticky top-0 z-20 bg-[#F6F4EF] pt-4 pb-3">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
-              <Link
-                href="/threads"
-                className="h-10 w-10 rounded-2xl bg-white/70 ring-1 ring-black/10 shadow-sm grid place-items-center hover:bg-white transition"
-                aria-label="Back to threads"
-                title="Back"
-              >
-                ←
-              </Link>
+              {/* Disable back while drawing */}
+              {drawingOpen ? (
+                <button
+                  type="button"
+                  className="h-10 w-10 rounded-2xl bg-white/50 ring-1 ring-black/10 shadow-sm grid place-items-center opacity-50 cursor-not-allowed"
+                  aria-label="Back disabled while drawing"
+                  title="Finish or close the canvas to go back"
+                  disabled
+                >
+                  ←
+                </button>
+              ) : (
+                <Link
+                  href="/threads"
+                  className="h-10 w-10 rounded-2xl bg-white/70 ring-1 ring-black/10 shadow-sm grid place-items-center hover:bg-white transition"
+                  aria-label="Back to threads"
+                  title="Back"
+                >
+                  ←
+                </Link>
+              )}
 
               <div className="min-w-0">
                 <div className="text-xl font-extrabold tracking-tight truncate">Thread</div>
@@ -400,6 +445,9 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
                        shadow-sm shadow-black/10 disabled:opacity-50"
               onClick={() => {
                 if (!canAct) return
+
+                // closing canvas should also unfreeze
+                if (showCanvas) setFreezeDrawing(false)
                 setShowCanvas((v) => !v)
               }}
               disabled={!canAct}
@@ -415,10 +463,30 @@ export default function ThreadClient({ threadId }: { threadId: string }) {
         {/* Composer slot */}
         {showCanvas && (
           <div className="mb-3 rounded-3xl bg-white/70 ring-1 ring-black/10 shadow-sm p-4">
+            {/* Freeze toggle (near controls) */}
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div className="text-xs text-[#0E2B24]/60">
+                {freezeDrawing ? 'Screen frozen (no scroll)' : 'Tip: freeze screen to avoid accidental scroll'}
+              </div>
+
+              <button
+                type="button"
+                className={`rounded-xl px-3 py-2 text-xs font-semibold ring-1 shadow-sm transition
+                  ${
+                    freezeDrawing
+                      ? 'bg-[#0E2B24] text-white ring-black/10'
+                      : 'bg-white/70 text-[#0E2B24] ring-black/10 hover:bg-white'
+                  }`}
+                onClick={() => setFreezeDrawing((v) => !v)}
+              >
+                {freezeDrawing ? 'Unfreeze' : 'Freeze screen for drawing'}
+              </button>
+            </div>
+
             {nextAction === 'send_scribble' && <ScribbleCanvas onDone={onDone} softSeconds={6} />}
 
             {nextAction === 'send_transform' && underlayUrl && (
-              <TransformCanvas underlayUrl={underlayUrl} onDone={onTransformDone} softSeconds={6} />
+              <TransformCanvas underlayUrl={underlayUrl} onDone={onTransformDone} />
             )}
 
             {nextAction === 'send_transform' && !underlayUrl && (
