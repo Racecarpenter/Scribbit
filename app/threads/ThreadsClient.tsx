@@ -271,8 +271,6 @@ export default function ThreadsClient() {
                             {creating ? 'Opening…' : 'Open'}
                         </button>
                     </div>
-
-                    <div className="mt-2 text-xs text-[#0E2B24]/50">Uses create_or_get_thread RPC (prevents duplicates).</div>
                 </div>
 
                 {/* Errors / loading */}
