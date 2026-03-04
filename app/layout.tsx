@@ -13,8 +13,31 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Scribb’it",
-  description: "Send scribbles. Transform. Reveal.",
+    title: 'Scribb’it',
+  description: 'Send scribbles. Transform. Reveal.',
+
+  openGraph: {
+    title: 'Scribb’it',
+    description: 'Send scribbles. Transform. Reveal.',
+    url: 'https://scribbit.chat',
+    siteName: 'Scribb’it',
+    images: [
+      {
+        url: '/scribbit-logo.png',
+        width: 512,
+        height: 512,
+        alt: 'Scribb’it Frog',
+      },
+    ],
+    type: 'website',
+  },
+
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Scribb’it',
+    description: 'Send scribbles. Transform. Reveal.',
+    images: ['/scribbit-logo.png'],
+  },
 };
 
 export default function RootLayout({

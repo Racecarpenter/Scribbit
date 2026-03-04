@@ -70,6 +70,8 @@ export default function ThreadsClient() {
     const [inviteUsername, setInviteUsername] = useState('')
     const [creating, setCreating] = useState(false)
 
+    const [myUsername, setMyUsername] = useState<string | null>(null)
+
     const loadThreads = useCallback(async () => {
         setErr(null)
         setLoading(true)
@@ -106,6 +108,8 @@ export default function ThreadsClient() {
             window.location.href = '/onboarding'
             return
         }
+
+        setMyUsername(meProfile?.username ?? null)
 
         // 3) Load threads via RPC
         const { data, error } = await supabase.rpc('list_threads_with_last_message')
@@ -209,7 +213,6 @@ export default function ThreadsClient() {
                                 <div className="text-sm text-[#0E2B24]/60">Send scribbles. Transform. Reveal.</div>
                             </div>
                         </div>
-
                         <button
                             className="rounded-xl px-4 py-2 text-sm font-semibold
                        bg-white/70 hover:bg-white
@@ -234,7 +237,7 @@ export default function ThreadsClient() {
                 >
                     <div className="flex items-start justify-between gap-4">
                         <div>
-                            <div className="text-base font-semibold">Start a chat</div>
+                            <div className="text-base font-semibold">Start a chat, {myUsername}</div>
                             <div className="text-sm text-[#0E2B24]/60">Enter a username to open a 1:1 thread.</div>
                         </div>
 
