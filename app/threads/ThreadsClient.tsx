@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createSupabaseBrowserClient } from '@/lib/supabaseClient'
 
 type ThreadListRow = {
@@ -14,16 +14,6 @@ type ThreadListRow = {
     last_message_sender_id: string | null
     last_message_created_at: string | null
     your_turn: boolean | null
-}
-
-type MessageRow = {
-    id: string
-    thread_id: string
-    sender_id: string
-    type: 'scribble' | 'transform'
-    image_path: string
-    caption: string | null
-    created_at: string
 }
 
 const bypass = process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === '1'
@@ -70,7 +60,8 @@ function timeAgo(iso: string | null) {
 
 export default function ThreadsClient() {
     const supabase = useMemo(() => createSupabaseBrowserClient(), [])
-    const myIdRef = useRef<string | null>(null)
+
+    const [myId, setMyId] = useState<string | null>(null)
 
     const [loading, setLoading] = useState(true)
     const [err, setErr] = useState<string | null>(null)
@@ -79,11 +70,12 @@ export default function ThreadsClient() {
     const [inviteUsername, setInviteUsername] = useState('')
     const [creating, setCreating] = useState(false)
 
-    const load = async () => {
+    const loadThreads = useCallback(async () => {
         setErr(null)
         setLoading(true)
 
         if (bypass) {
+            setMyId('dev-me')
             setThreads(DEV_THREADS)
             setLoading(false)
             return
@@ -95,14 +87,14 @@ export default function ThreadsClient() {
             window.location.href = '/sign-in'
             return
         }
-        const myId = userRes.user.id
-        myIdRef.current = myId
+        const nextMyId = userRes.user.id
+        setMyId(nextMyId)
 
         // 2) Onboarding gate
         const { data: meProfile, error: meErr } = await supabase
             .from('profiles')
             .select('username')
-            .eq('id', myId)
+            .eq('id', nextMyId)
             .maybeSingle()
 
         if (meErr) {
@@ -125,51 +117,30 @@ export default function ThreadsClient() {
 
         setThreads((data as ThreadListRow[]) ?? [])
         setLoading(false)
-    }
+    }, [supabase])
 
     useEffect(() => {
-        void load()
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+        void loadThreads()
+    }, [loadThreads])
 
-    // Realtime (disabled in bypass)
+    // Realtime (disabled in bypass): refetch only (most reliable)
     useEffect(() => {
         if (bypass) return
-        const myId = myIdRef.current
         if (!myId) return
 
         const channel = supabase
             .channel('threads:last-message')
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
-                const msg = payload.new as MessageRow
-
-                setThreads((prev) => {
-                    const idx = prev.findIndex((t) => t.thread_id === msg.thread_id)
-                    if (idx === -1) return prev
-
-                    const updated: ThreadListRow = {
-                        ...prev[idx],
-                        last_message_id: msg.id,
-                        last_message_type: msg.type,
-                        last_message_sender_id: msg.sender_id,
-                        last_message_created_at: msg.created_at,
-                        your_turn: msg.sender_id !== myId,
-                    }
-
-                    const next = [...prev]
-                    next.splice(idx, 1)
-                    next.unshift(updated)
-                    return next
-                })
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => {
+                void loadThreads()
             })
             .subscribe()
 
         return () => {
-            supabase.removeChannel(channel)
+            void supabase.removeChannel(channel)
         }
-    }, [supabase])
+    }, [myId, supabase, loadThreads])
 
-    const createOrOpenThreadByUsername = async () => {
+    const createOrOpenThreadByUsername = useCallback(async () => {
         const u = inviteUsername.trim().toLowerCase()
         if (!u) return
 
@@ -188,8 +159,8 @@ export default function ThreadsClient() {
                 window.location.href = '/sign-in'
                 return
             }
-            const myId = userRes.user.id
-            myIdRef.current = myId
+            const nextMyId = userRes.user.id
+            setMyId(nextMyId)
 
             const { data: other, error: findErr } = await supabase
                 .from('profiles')
@@ -199,7 +170,7 @@ export default function ThreadsClient() {
 
             if (findErr) throw findErr
             if (!other?.id) throw new Error('User not found')
-            if (other.id === myId) throw new Error("That's you 🙂")
+            if (other.id === nextMyId) throw new Error("That's you 🙂")
 
             const { data: threadId, error: rpcErr } = await supabase.rpc('create_or_get_thread', {
                 other_user_id: other.id,
@@ -215,53 +186,56 @@ export default function ThreadsClient() {
         } finally {
             setCreating(false)
         }
-    }
+    }, [inviteUsername, supabase])
 
     return (
-        <div className="min-h-screen bg-[#F6F4EF] text-[#0E2B24]">
+        <div className="h-screen bg-[#F6F4EF] text-[#0E2B24]">
             {/* Subtle top glow like your mock */}
-            <div className="pointer-events-none fixed inset-x-0 -top-40 h-80 opacity-60 blur-3xl
-                      bg-[radial-gradient(circle_at_top,#8CE13C22,transparent_55%)]" />
+            <div
+                className="pointer-events-none fixed inset-x-0 -top-40 h-80 opacity-60 blur-3xl
+                      bg-[radial-gradient(circle_at_top,#8CE13C22,transparent_55%)]"
+            />
 
-            <div className="mx-auto max-w-2xl px-4 py-10 space-y-6">
+            <div className="mx-auto flex h-screen max-w-2xl flex-col px-4 pb-4">
                 {/* Header */}
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-2xl bg-white shadow-sm ring-1 ring-black/5 grid place-items-center">
-                            <span className="text-xl">🐸</span>
+                <div className="sticky top-0 z-20 bg-[#F6F4EF] pt-4 pb-3">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                            <div className="h-10 w-10 rounded-2xl bg-white shadow-sm ring-1 ring-black/5 grid place-items-center">
+                                <span className="text-xl">🐸</span>
+                            </div>
+                            <div className="leading-tight">
+                                <div className="text-2xl font-extrabold tracking-tight">Threads</div>
+                                <div className="text-sm text-[#0E2B24]/60">Send scribbles. Transform. Reveal.</div>
+                            </div>
                         </div>
-                        <div className="leading-tight">
-                            <div className="text-2xl font-extrabold tracking-tight">Threads</div>
-                            <div className="text-sm text-[#0E2B24]/60">Send scribbles. Transform. Reveal.</div>
-                        </div>
-                    </div>
 
-                    <button
-                        className="rounded-xl px-4 py-2 text-sm font-semibold
+                        <button
+                            className="rounded-xl px-4 py-2 text-sm font-semibold
                        bg-white/70 hover:bg-white
                        ring-1 ring-black/10 shadow-sm"
-                        onClick={async () => {
-                            if (bypass) {
+                            onClick={async () => {
+                                if (bypass) {
+                                    window.location.replace('/sign-in')
+                                    return
+                                }
+                                await supabase.auth.signOut()
                                 window.location.replace('/sign-in')
-                                return
-                            }
-                            await supabase.auth.signOut()
-                            window.location.replace('/sign-in')
-                        }}
-                    >
-                        Sign out
-                    </button>
+                            }}
+                        >
+                            Sign out
+                        </button>
+                    </div>
                 </div>
-
                 {/* Start a chat panel */}
-                <div className="rounded-3xl bg-white/70 backdrop-blur
-                        ring-1 ring-black/10 shadow-sm p-5">
+                <div
+                    className="rounded-3xl bg-white/70 backdrop-blur
+                        ring-1 ring-black/10 shadow-sm p-5"
+                >
                     <div className="flex items-start justify-between gap-4">
                         <div>
                             <div className="text-base font-semibold">Start a chat</div>
-                            <div className="text-sm text-[#0E2B24]/60">
-                                Enter a username to open a 1:1 thread.
-                            </div>
+                            <div className="text-sm text-[#0E2B24]/60">Enter a username to open a 1:1 thread.</div>
                         </div>
 
                         <div className="hidden sm:flex items-center gap-2">
@@ -295,25 +269,17 @@ export default function ThreadsClient() {
                         </button>
                     </div>
 
-                    <div className="mt-2 text-xs text-[#0E2B24]/50">
-                        Uses create_or_get_thread RPC (prevents duplicates).
-                    </div>
+                    <div className="mt-2 text-xs text-[#0E2B24]/50">Uses create_or_get_thread RPC (prevents duplicates).</div>
                 </div>
 
                 {/* Errors / loading */}
-                {err && (
-                    <div className="rounded-2xl bg-white/70 ring-1 ring-red-500/20 p-4 text-red-800">
-                        {err}
-                    </div>
-                )}
+                {err && <div className="rounded-2xl bg-white/70 ring-1 ring-red-500/20 p-4 text-red-800">{err}</div>}
                 {loading && <div className="text-sm text-[#0E2B24]/60">Loading…</div>}
 
                 {/* Thread list */}
                 <div className="space-y-3">
                     {!loading && threads.length === 0 && (
-                        <div className="rounded-3xl bg-white/70 ring-1 ring-black/10 p-6 text-[#0E2B24]/70">
-                            No threads yet.
-                        </div>
+                        <div className="rounded-3xl bg-white/70 ring-1 ring-black/10 p-6 text-[#0E2B24]/70">No threads yet.</div>
                     )}
 
                     {threads.map((t) => {
@@ -332,9 +298,7 @@ export default function ThreadsClient() {
                                     <div className="min-w-0">
                                         <div className="flex items-center gap-2">
                                             <div className="truncate text-base font-semibold">{label}</div>
-                                            {when ? (
-                                                <span className="text-xs text-[#0E2B24]/45">· {when}</span>
-                                            ) : null}
+                                            {when ? <span className="text-xs text-[#0E2B24]/45">· {when}</span> : null}
                                         </div>
 
                                         <div className="mt-1 text-sm text-[#0E2B24]/60">
@@ -344,23 +308,24 @@ export default function ThreadsClient() {
                                     </div>
 
                                     {t.your_turn ? (
-                                        <span className="shrink-0 rounded-full px-3 py-1 text-xs font-semibold
-                                     bg-[#8CE13C]/20 text-[#0E2B24] ring-1 ring-[#8CE13C]/35">
+                                        <span
+                                            className="shrink-0 rounded-full px-3 py-1 text-xs font-semibold
+                                     bg-[#8CE13C]/20 text-[#0E2B24] ring-1 ring-[#8CE13C]/35"
+                                        >
                                             Your turn
                                         </span>
                                     ) : (
-                                        <span className="shrink-0 rounded-full px-3 py-1 text-xs font-semibold
-                                     bg-black/5 text-[#0E2B24]/60 ring-1 ring-black/10">
+                                        <span
+                                            className="shrink-0 rounded-full px-3 py-1 text-xs font-semibold
+                                     bg-black/5 text-[#0E2B24]/60 ring-1 ring-black/10"
+                                        >
                                             Waiting
                                         </span>
                                     )}
                                 </div>
 
-                                {/* tiny affordance */}
                                 <div className="mt-3 h-px bg-black/5" />
-                                <div className="mt-3 text-xs text-[#0E2B24]/45 group-hover:text-[#0E2B24]/60">
-                                    Open thread →
-                                </div>
+                                <div className="mt-3 text-xs text-[#0E2B24]/45 group-hover:text-[#0E2B24]/60">Open thread →</div>
                             </a>
                         )
                     })}
